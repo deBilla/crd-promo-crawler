@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CRD Promo Crawler - Sri Lanka Credit Card Deals</title>
+  <link rel="stylesheet" href="/static/css/styles.css">
+</head>
+<body>
+  <header>
+    <div class="container">
+      <h1>Sri Lanka Credit Card Deals</h1>
+      <p class="subtitle">Aggregated promotions from major banks</p>
+    </div>
+  </header>
+
+  <main class="container">
+    <!-- Stats Section -->
+    <section id="stats" class="stats-grid"></section>
+
+    <!-- Filters -->
+    <section class="filters">
+      <input type="text" id="search-input" placeholder="Search deals..." />
+      <select id="bank-filter"><option value="">All Banks</option></select>
+      <select id="category-filter"><option value="">All Categories</option></select>
+      <label class="checkbox-label">
+        <input type="checkbox" id="active-filter" /> Active only
+      </label>
+    </section>
+
+    <!-- Deal List -->
+    <section id="deals" class="deals-grid"></section>
+
+    <!-- Pagination -->
+    <nav id="pagination" class="pagination"></nav>
+  </main>
+
+  <!-- Deal Modal -->
+  <div id="modal-overlay" class="modal-overlay" hidden>
+    <div class="modal">
+      <button class="modal-close" onclick="closeModal()">&times;</button>
+      <div id="modal-content"></div>
+    </div>
+  </div>
+
+  <footer>
+    <div class="container">
+      <p>CRD Promo Crawler &mdash; Data refreshed automatically</p>
+    </div>
+  </footer>
+
+  <script src="/static/js/api.js"></script>
+  <script src="/static/js/components.js"></script>
+  <script src="/static/js/app.js"></script>
+</body>
+</html>

@@ -1,8 +1,43 @@
-downloads
-old
-old1
-test
-bank_promotions***
-__pycache__
-*.log
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.eggs/
+*.egg
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
 .DS_Store
+Thumbs.db
+
+# Environment & secrets
+.env
+
+# Logs
+*.log
+
+# Old V1 outputs
+bank_promotions*
+processed_urls.log
+crawler_log_*
+
+# Test / coverage
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+
+# Docker volumes (local)
+data/

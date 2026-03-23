@@ -1,0 +1,95 @@
+"""Prompts and utilities for deal extraction."""
+
+import re
+
+CANONICAL_CATEGORIES = [
+    "Dining & Restaurants",
+    "Shopping & Retail",
+    "Travel & Lodging",
+    "Health & Wellness",
+    "Groceries & Supermarkets",
+    "Online Shopping",
+    "Fuel",
+    "Other",
+]
+
+VALID_CARD_TYPES = [
+    "Credit",
+    "Debit",
+    "Platinum",
+    "Gold",
+    "Silver",
+    "Rewards",
+    "Cashback",
+    "Signature",
+    "Premium",
+    "Classic",
+]
+
+EXTRACTION_PROMPT = """Extract all credit card promotion deals from the following page content.
+
+Page Title: {page_title}
+Page URL: {url}
+Content:
+{content}
+
+For each deal found, extract the following information:
+- bank_name: Name of the bank (required)
+- card_name: Name of the credit card (required)
+- card_types: List of card types (must be from: {card_types})
+- promotion_title: Title/name of the promotion (required)
+- description: Detailed description of the promotion (required)
+- category: Category of the deal (must be from: {categories})
+- discount_percentage: Discount as a percentage (e.g., 10 for 10%)
+- discount_amount: Fixed discount amount in LKR
+- max_discount_lkr: Maximum discount limit in LKR
+- merchant_name: Name of merchant/store if applicable
+- merchant_category: Category of merchant if applicable
+- valid_from: Start date of promotion (ISO format or descriptive)
+- valid_until: End date of promotion (ISO format or descriptive)
+- terms_and_conditions: Terms and conditions text
+
+Return a JSON array of deals. Each deal must have bank_name, card_name, card_types,
+promotion_title, description, and category. Other fields can be null if not mentioned.
+
+Example format:
+[
+  {{
+    "bank_name": "Sample Bank",
+    "card_name": "Sample Card",
+    "card_types": ["Credit", "Gold"],
+    "promotion_title": "Sample Promotion",
+    "description": "Sample description",
+    "category": "Dining & Restaurants",
+    "discount_percentage": 10,
+    "discount_amount": null,
+    "max_discount_lkr": 5000,
+    "merchant_name": "Sample Restaurant",
+    "merchant_category": "Dining",
+    "valid_from": "2026-01-01",
+    "valid_until": "2026-12-31",
+    "terms_and_conditions": "Sample terms"
+  }}
+]
+
+Return ONLY the JSON array, no additional text."""
+
+
+def prepare_content(text: str, max_chars: int) -> str:
+    """Clean and prepare content for LLM processing.
+
+    Args:
+        text: Raw page content
+        max_chars: Maximum characters to keep
+
+    Returns:
+        Cleaned and truncated content
+    """
+    # Normalize whitespace
+    cleaned = re.sub(r"\s+", " ", text)
+
+    # Truncate to max length
+    if len(cleaned) > max_chars:
+        cleaned = cleaned[:max_chars]
+
+    return cleaned.strip()

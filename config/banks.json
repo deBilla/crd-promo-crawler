@@ -1,0 +1,154 @@
+{
+  "canonical_categories": [
+    "Dining & Restaurants",
+    "Shopping & Retail",
+    "Travel & Lodging",
+    "Health & Wellness",
+    "Groceries & Supermarkets",
+    "Online Shopping",
+    "Fuel",
+    "Other"
+  ],
+  "valid_card_types": [
+    "Credit Card",
+    "Debit Card",
+    "Visa",
+    "Mastercard",
+    "Amex"
+  ],
+  "banks": [
+    {
+      "name": "Sampath Bank",
+      "base_url": "https://www.sampath.lk",
+      "seed_urls": [
+        "https://www.sampath.lk/sampath-cards/credit-card-offer",
+        "https://www.sampath.lk/sampath-cards/credit-card-offer?firstTab=super_markets",
+        "https://www.sampath.lk/sampath-cards/credit-card-offer?firstTab=Electronics_and_Furniture",
+        "https://www.sampath.lk/sampath-cards/credit-card-offer?firstTab=shopping",
+        "https://www.sampath.lk/sampath-cards/credit-card-offer?firstTab=hotels",
+        "https://www.sampath.lk/sampath-cards/credit-card-offer?firstTab=health",
+        "https://www.sampath.lk/sampath-cards/credit-card-offer?firstTab=online"
+      ],
+      "url_patterns": [
+        "^https://www\\.sampath\\.lk/sampath-cards/.*"
+      ],
+      "needs_puppeteer": true,
+      "crawl_strategy": "infinite_scroll",
+      "selectors": {
+        "card": "div.promotion-card.mb-5.aos-init.aos-animate"
+      },
+      "categories_mapping": {
+        "super_markets": "Groceries & Supermarkets",
+        "Electronics_and_Furniture": "Shopping & Retail",
+        "shopping": "Shopping & Retail",
+        "hotels": "Travel & Lodging",
+        "health": "Health & Wellness",
+        "online": "Online Shopping"
+      }
+    },
+    {
+      "name": "People's Bank",
+      "base_url": "https://www.peoplesbank.lk",
+      "seed_urls": [
+        "https://www.peoplesbank.lk/special-offers/"
+      ],
+      "url_patterns": [
+        "^https://www\\.peoplesbank\\.lk/special-offers/.*"
+      ],
+      "needs_puppeteer": false,
+      "crawl_strategy": "category_discovery",
+      "selectors": {
+        "card": "div.flip",
+        "category_container": "div.row.special-card.mt-4",
+        "category_name": "p.special-card-header",
+        "category_link": "a.btn-type8"
+      }
+    },
+    {
+      "name": "Bank of Ceylon",
+      "base_url": "https://www.boc.lk",
+      "seed_urls": [
+        "https://www.boc.lk/personal-banking/card-offers/",
+        "https://www.boc.lk/personal-banking/card-offers/travel-and-leisure",
+        "https://www.boc.lk/personal-banking/card-offers/lifestyle",
+        "https://www.boc.lk/personal-banking/card-offers/supermarkets",
+        "https://www.boc.lk/personal-banking/card-offers/zero-plans",
+        "https://www.boc.lk/personal-banking/card-offers/online",
+        "https://www.boc.lk/personal-banking/card-offers/health-beauty",
+        "https://www.boc.lk/personal-banking/card-offers/dining"
+      ],
+      "url_patterns": [
+        "^https://www\\.boc\\.lk/personal-banking/card-offers/.*"
+      ],
+      "needs_puppeteer": false,
+      "crawl_strategy": "load_more_button",
+      "selectors": {
+        "card": "a.product.unique",
+        "load_more": "button#moreCardOffers"
+      },
+      "categories_mapping": {
+        "travel-and-leisure": "Travel & Lodging",
+        "lifestyle": "Shopping & Retail",
+        "supermarkets": "Groceries & Supermarkets",
+        "zero-plans": "Other",
+        "online": "Online Shopping",
+        "health-beauty": "Health & Wellness",
+        "dining": "Dining & Restaurants"
+      }
+    },
+    {
+      "name": "HSBC",
+      "base_url": "https://www.hsbc.lk",
+      "seed_urls": [
+        "https://www.hsbc.lk/credit-cards/offers/"
+      ],
+      "url_patterns": [
+        "^https://www\\.hsbc\\.lk/credit-cards/.*"
+      ],
+      "needs_puppeteer": false,
+      "crawl_strategy": "pagination",
+      "selectors": {
+        "card": "div.M-MASTERTILEITEM-DEV",
+        "category_container": "div.M-MASTERTILEITEM-DEV",
+        "category_name": "h3.link",
+        "category_link": "a.A-LNKC28L-RW-ALL",
+        "pagination_next": "a.icon-chevron-right",
+        "merchant": "h3.link",
+        "offer_text": "div.rich-text"
+      }
+    },
+    {
+      "name": "Commercial Bank",
+      "base_url": "https://www.combank.lk",
+      "seed_urls": [
+        "https://www.combank.lk/rewards-promotions"
+      ],
+      "url_patterns": [
+        "^https://www\\.combank\\.lk/rewards.*"
+      ],
+      "needs_puppeteer": false,
+      "crawl_strategy": "static",
+      "selectors": {
+        "card": "a.reward.box-shadow"
+      }
+    },
+    {
+      "name": "DFCC Bank",
+      "base_url": "https://www.dfcc.lk",
+      "seed_urls": [
+        "https://www.dfcc.lk/promotions-categories/card-promotions/"
+      ],
+      "url_patterns": [
+        "^https://www\\.dfcc\\.lk/promotions.*"
+      ],
+      "needs_puppeteer": false,
+      "crawl_strategy": "category_discovery",
+      "selectors": {
+        "card": "div.promotion-item",
+        "category_container": "div.promotion-category.col-md-4.promotion-eligible-all",
+        "category_name": "h3",
+        "category_link": "a"
+      }
+    }
+  ]
+}

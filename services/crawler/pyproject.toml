@@ -1,0 +1,13 @@
+[project]
+name = "crawler-service"
+version = "0.1.0"
+description = "Crawler service — fetches pages from frontier queue, stores in MinIO"
+requires-python = ">=3.11"
+dependencies = [
+    "httpx[http2]>=0.27,<1.0",
+    "shared",
+]
+
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
