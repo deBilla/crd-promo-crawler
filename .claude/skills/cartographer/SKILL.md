@@ -339,125 +339,126 @@ CRAWL_DOMAINS = {
 
 ## Domain 3: Documentation & Diagrams
 
-### Diagram Types for This System
+### Diagram Formats
 
-| Purpose | Diagram Type | When |
-|---------|-------------|------|
-| Service topology | Mermaid `graph TB` with subgraphs | System overview |
-| Data flow | Mermaid `sequenceDiagram` | Trace a URL through the pipeline |
-| URL states | Mermaid `stateDiagram-v2` | Document URL lifecycle |
-| Docker Compose layout | Mermaid `graph LR` | Infrastructure view |
-| Database schema | Mermaid `erDiagram` | Data model documentation |
-| Queue message flow | Mermaid `graph LR` | Queue contracts |
+This project uses **two diagram formats** for different contexts:
 
-### Database ER Diagram
+| Context | Format | Why |
+|---------|--------|-----|
+| README / inline markdown | **Mermaid** | GitHub renders natively, no export step |
+| Detailed architecture / interactive | **Excalidraw JSON** | Hand-drawn style, drag-and-drop editing, richer layouts |
 
-```mermaid
-erDiagram
-    url_metadata {
-        int id PK
-        text url UK
-        text domain
-        text file_path
-        text status
-        int status_code
-        text content_hash
-        int depth
-        int retry_count
-        boolean is_seed
-        timestamptz discovered_at
-        timestamptz fetched_at
-        timestamptz parsed_at
-    }
+Excalidraw source files live in `docs/diagrams/*.excalidraw`. Open them at excalidraw.com or the desktop app.
 
-    credit_card_deals {
-        int id PK
-        text source_url FK
-        text bank_name
-        text card_name
-        text promotion_title
-        text description
-        numeric discount_percentage
-        numeric discount_amount
-        text merchant_name
-        text merchant_category
-        date valid_from
-        date valid_until
-        text terms_and_conditions
-        numeric confidence_score
-        timestamptz extracted_at
-    }
+### When to Use Which
 
-    url_metadata ||--o{ credit_card_deals : "source_url"
+| Purpose | Format |
+|---------|--------|
+| Quick service topology in a PR description | Mermaid |
+| Full architecture diagram with annotations | Excalidraw |
+| Data flow sequence | Mermaid `sequenceDiagram` |
+| Annotating changes to existing diagram | Excalidraw (green overlays) |
+| Database ER diagram | Mermaid `erDiagram` |
+
+---
+
+### Excalidraw JSON Reference
+
+When producing Excalidraw diagrams, output valid clipboard JSON that the user can paste directly into Excalidraw (Ctrl+V):
+
+```json
+{"type":"excalidraw/clipboard","elements":[...],"files":{}}
 ```
+
+#### Element Types
+
+| Type | Use for | Key properties |
+|------|---------|----------------|
+| `rectangle` | Services, queues, boxes | `x`, `y`, `width`, `height`, `strokeColor`, `roundness` |
+| `ellipse` | Databases, storage | `x`, `y`, `width`, `height` |
+| `arrow` | Connections, data flow | `points`, `startBinding`, `endBinding` |
+| `text` | Labels, annotations | `text`, `fontSize`, `containerId` (for text inside shapes) |
+
+#### Arrow Bindings
+
+Connect arrows to shapes using bindings:
+
+```json
+{
+  "type": "arrow",
+  "startBinding": { "elementId": "shape-id", "focus": 0, "gap": 1 },
+  "endBinding": { "elementId": "shape-id", "focus": 0, "gap": 1 },
+  "points": [[0, 0], [200, 100]]
+}
+```
+
+- `focus`: -1 to 1 — where on the shape edge the arrow connects
+- `gap`: pixel distance from shape border
+
+#### Text Inside Shapes
+
+Create a shape, then a text element with `containerId` pointing to the shape's `id`:
+
+```json
+{"id": "box1", "type": "rectangle", "x": 100, "y": 100, "width": 200, "height": 80, ...}
+{"type": "text", "text": "Crawler", "containerId": "box1", "textAlign": "center", "verticalAlign": "middle", ...}
+```
+
+#### Color Conventions
+
+| Color | Hex | Use |
+|-------|-----|-----|
+| Default (black) | `#1e1e1e` | Existing elements |
+| Green | `#2f9e44` | New or changed elements |
+| Blue | `#1971c2` | Infrastructure components |
+| Orange | `#e8590c` | External dependencies |
+
+#### Stroke Styles
+
+| Style | Value | Use |
+|-------|-------|-----|
+| Solid | `"solid"` | Existing connections |
+| Dashed | `"dashed"` | New/proposed connections |
+| Dotted | `"dotted"` | Optional/conditional flows |
+
+#### Updating Existing Diagrams
+
+When modifying an existing diagram:
+1. Keep all original elements unchanged (same IDs, positions, colors)
+2. Add new elements with `strokeColor: "#2f9e44"` (green)
+3. Use `strokeStyle: "dashed"` for new arrows
+4. Add annotation text elements near changes explaining what's new
+5. Output the complete JSON (original + new elements) so it's a drop-in replacement
 
 ### Queue Message Contracts
 
-Document what each queue carries — this is the API between services:
-
 ```
 frontier queue:
-  FrontierItem { url: str, depth: int, priority: int, source_url: str? }
+  FrontierItem { url, depth, priority, source_url?, domain, needs_puppeteer }
   Producer: Parser Service (new URLs), Seed loader
   Consumer: Crawler Service
 
 parsing queue:
-  ParsingQueueItem { url: str, minio_path: str, depth: int }
+  ParsingQueueItem { url, minio_path, depth, domain }
   Producer: Crawler Service
   Consumer: Parser Service
 
 extraction queue:
-  ExtractionQueueItem { url: str, minio_path: str, text_content: str, page_title: str }
+  ExtractionQueueItem { url, minio_path, text_content, page_title, domain }
   Producer: Parser Service (relevant pages only)
   Consumer: Extractor Service
 ```
 
 ### Generating the Dependency Map
 
-Use the bundled script to auto-generate a dependency graph from the codebase:
-
 ```bash
-# Mermaid diagram
-python skills/cartographer/scripts/map_dependencies.py services/ --package shared --format mermaid
-
-# JSON for programmatic use
-python skills/cartographer/scripts/map_dependencies.py services/ --format json
-
-# Graphviz DOT
-python skills/cartographer/scripts/map_dependencies.py services/ --format dot | dot -Tpng -o deps.png
-```
-
-### README Structure
-
-```markdown
-# Card Promotions Data Crawler
-
-Crawls bank websites for credit card promotions, extracts structured deal data
-using LLM, and serves it through an API.
-
-## Architecture
-<Link to architecture diagram>
-
-## Quick Start
-docker compose up -d
-# Seed the frontier queue:
-python scripts/seed.py --config seeds.yaml
-
-## Services
-<Table: service, port, purpose>
-
-## Configuration
-<Environment variables table>
-
-## Development
-<How to run tests, add a new bank, modify extraction prompts>
+python .claude/skills/cartographer/scripts/map_dependencies.py services/ --package shared --format mermaid
 ```
 
 ### Contributor Guide
 
-Read `references/contributor_guide_template.md` for a full template covering dev setup,
-service architecture, how to add a new bank target, how to modify LLM prompts, and
-the PR process.
+Read `references/contributor_guide_template.md` for dev setup, service architecture,
+how to add a new bank target, and the PR process.
 
 ## Workflow
 
@@ -465,8 +466,9 @@ When asked to map, document, or diagram:
 
 1. **Determine scope** — whole system, single service, data flow, or specific feature?
 2. **Read the actual code** — check docker-compose.yml, service entry points, shared models.
-   Don't guess at what talks to what.
-3. **Choose the right diagram** — use the table above to pick the right Mermaid diagram type.
-4. **Produce the artifact** — Mermaid diagram, markdown doc, or both.
-5. **Verify accuracy** — cross-check diagram against docker-compose.yml and actual imports.
-   An inaccurate diagram is worse than none.
+3. **Choose the right format**:
+   - Quick inline diagram → Mermaid
+   - Detailed architecture / annotating changes → Excalidraw JSON
+4. **Produce the artifact** — output clipboard-pasteable Excalidraw JSON or Mermaid block.
+5. **For Excalidraw updates** — include ALL original elements plus new ones in green.
+6. **Verify accuracy** — cross-check against docker-compose.yml and actual imports.

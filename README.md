@@ -47,6 +47,8 @@ graph TB
     api -->|serve dashboard| api
 ```
 
+> Detailed interactive diagram: [docs/diagrams/architecture.excalidraw](docs/diagrams/architecture.excalidraw) (open in [excalidraw.com](https://excalidraw.com))
+
 ### Data Flow
 
 ```
