@@ -30,6 +30,10 @@ class BaseServiceConfig(BaseSettings):
     # Logging
     log_level: str = "INFO"
 
+    # OpenTelemetry
+    otel_endpoint: str = "http://otel-collector:4317"
+    otel_enabled: bool = True
+
 
 class LLMConfig(BaseSettings):
     """LLM-specific settings for services that use the LLM."""

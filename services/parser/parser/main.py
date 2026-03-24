@@ -11,6 +11,7 @@ import json
 import logging
 import re
 import signal
+import time
 from pathlib import Path
 
 from parser.config import ParserConfig
@@ -27,6 +28,18 @@ from shared.queue import RedisQueue
 from shared.redis_client import create_redis
 
 logger = logging.getLogger(__name__)
+
+# Telemetry instruments (initialized in main)
+_meter = None
+_tracer = None
+_pages_parsed = None
+_pages_relevant = None
+_pages_irrelevant = None
+_links_discovered = None
+_prefilter_results = None
+_llm_call_duration = None
+_llm_errors = None
+_errors = None
 
 
 def load_bank_url_patterns(config_path: str = "config/banks.json") -> dict[str, list[re.Pattern]]:
@@ -90,6 +103,7 @@ async def process_item(
     domain_clean = item.domain.replace("www.", "").replace("www2.", "")
     url_patterns = bank_patterns.get(domain_clean)
     filtered_links = filter_urls(links, item.domain, config.max_depth, item.depth, url_patterns)
+    new_links = 0
     for url in filtered_links:
         if not await dedup.is_seen(url):
             await frontier_queue.push(FrontierItem(
@@ -97,17 +111,30 @@ async def process_item(
                 domain=item.domain,
                 depth=item.depth + 1,
             ))
+            new_links += 1
     logger.debug("Pushed new links to frontier from %s", item.url)
+    if _links_discovered:
+        _links_discovered.add(new_links, {"domain": item.domain})
 
     # Two-stage relevance check
     pre_result = pre_filter(item.url, title)
+    if _prefilter_results:
+        _prefilter_results.add(1, {"result": pre_result})
 
     if pre_result == "likely":
         is_relevant, confidence = True, 0.9
     elif pre_result == "unlikely":
         is_relevant, confidence = False, 0.1
     else:
-        is_relevant, confidence = await check_relevance(llm, item.url, title, text)
+        t0 = time.monotonic()
+        try:
+            is_relevant, confidence = await check_relevance(llm, item.url, title, text)
+        except Exception:
+            if _llm_errors:
+                _llm_errors.add(1, {"service": "parser"})
+            raise
+        if _llm_call_duration:
+            _llm_call_duration.record(time.monotonic() - t0, {"service": "parser"})
 
     logger.debug("Relevance for %s: relevant=%s, confidence=%.2f", item.url, is_relevant, confidence)
 
@@ -122,6 +149,14 @@ async def process_item(
             .values(status=status, parsed_at=__import__("datetime").datetime.utcnow())
         )
         await session.commit()
+
+    # Record parse metrics
+    if _pages_parsed:
+        _pages_parsed.add(1, {"domain": item.domain})
+    if is_relevant and _pages_relevant:
+        _pages_relevant.add(1, {"domain": item.domain})
+    elif not is_relevant and _pages_irrelevant:
+        _pages_irrelevant.add(1, {"domain": item.domain})
 
     # Push relevant pages to extraction queue
     if is_relevant:
@@ -139,12 +174,30 @@ async def process_item(
 
 async def main() -> None:
     """Main loop: pop pages from parsing queue → parse → relevance check → route."""
+    global _meter, _tracer, _pages_parsed, _pages_relevant, _pages_irrelevant
+    global _links_discovered, _prefilter_results, _llm_call_duration, _llm_errors, _errors
+
     config = ParserConfig()
 
     logging.basicConfig(
         level=getattr(logging, config.log_level),
         format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
     )
+
+    # Initialize OpenTelemetry
+    if config.otel_enabled:
+        from shared.telemetry import init_telemetry
+        _meter, _tracer = init_telemetry("parser", config.otel_endpoint)
+        _pages_parsed = _meter.create_counter("pages_parsed", description="Pages parsed")
+        _pages_relevant = _meter.create_counter("pages_relevant", description="Pages marked relevant")
+        _pages_irrelevant = _meter.create_counter("pages_irrelevant", description="Pages marked irrelevant")
+        _links_discovered = _meter.create_counter("links_discovered", description="New links discovered")
+        _prefilter_results = _meter.create_counter("prefilter_results", description="Pre-filter outcomes")
+        _llm_call_duration = _meter.create_histogram(
+            "llm_call_duration_seconds", description="LLM call duration", unit="s",
+        )
+        _llm_errors = _meter.create_counter("llm_errors", description="LLM call errors")
+        _errors = _meter.create_counter("processing_errors", description="Processing errors")
 
     logger.info("Starting parser service...")
 
@@ -213,6 +266,8 @@ async def main() -> None:
             )
         except Exception as e:
             logger.error("Error processing %s: %s", item.url, e, exc_info=True)
+            if _errors:
+                _errors.add(1, {"service": "parser", "type": "unexpected"})
 
     # Cleanup
     await llm.close()

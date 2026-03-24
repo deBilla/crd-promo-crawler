@@ -1,0 +1,53 @@
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+  # Scrape Redis metrics via redis_receiver
+  redis:
+    endpoint: redis:6379
+    collection_interval: 10s
+
+  # Scrape Postgres metrics
+  postgresql:
+    endpoint: postgres:5432
+    transport: tcp
+    username: ${env:POSTGRES_USER}
+    password: ${env:POSTGRES_PASSWORD}
+    databases:
+      - ${env:POSTGRES_DB}
+    collection_interval: 10s
+    tls:
+      insecure: true
+
+processors:
+  batch:
+    timeout: 10s
+    send_batch_size: 1024
+
+  memory_limiter:
+    check_interval: 5s
+    limit_mib: 256
+
+exporters:
+  prometheus:
+    endpoint: 0.0.0.0:8889
+    namespace: crawler
+
+  debug:
+    verbosity: basic
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [debug]
+
+    metrics:
+      receivers: [otlp, redis, postgresql]
+      processors: [memory_limiter, batch]
+      exporters: [prometheus]

@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import signal
+import time
 from datetime import datetime
 from urllib.parse import urlparse
 
@@ -23,6 +24,17 @@ from shared.queue import RedisQueue
 from shared.redis_client import create_redis
 
 logger = logging.getLogger(__name__)
+
+# Telemetry instruments (initialized in main)
+_meter = None
+_tracer = None
+_urls_fetched = None
+_fetch_duration = None
+_content_dedup_skipped = None
+_url_dedup_skipped = None
+_domain_ceiling_skipped = None
+_errors = None
+_queue_depth = None
 
 
 async def process_url(
@@ -43,12 +55,21 @@ async def process_url(
     await rate_limiter.acquire(domain)
 
     # Fetch — use Puppeteer for JS-rendered pages
+    t0 = time.monotonic()
     if item.needs_puppeteer:
         logger.info("Using Puppeteer for %s", item.url)
         result = await fetcher.fetch_with_puppeteer(item.url)
     else:
         result = await fetcher.fetch(item.url)
+    fetch_secs = time.monotonic() - t0
     logger.info("Fetched %s → %d (%d bytes)", item.url, result.status_code, len(result.content))
+
+    # Record metrics
+    if _fetch_duration:
+        _fetch_duration.record(fetch_secs, {"domain": domain})
+    if _urls_fetched:
+        status = "success" if result.status_code < 400 else "error"
+        _urls_fetched.add(1, {"domain": domain, "status": status})
 
     if result.status_code >= 400:
         # Record the failure but don't enqueue for parsing
@@ -69,6 +90,8 @@ async def process_url(
     # Content-based dedup: skip if identical content already processed
     if await dedup.is_content_seen(result.content_hash):
         logger.info("Duplicate content for %s (hash=%s…), skipping", item.url, result.content_hash[:12])
+        if _content_dedup_skipped:
+            _content_dedup_skipped.add(1)
         return
     await dedup.mark_content_seen(result.content_hash)
 
@@ -132,12 +155,38 @@ async def handle_failure(
 
 async def main() -> None:
     """Main loop: pop URLs from frontier → fetch → store → enqueue."""
+    global _meter, _tracer, _urls_fetched, _fetch_duration
+    global _content_dedup_skipped, _url_dedup_skipped, _domain_ceiling_skipped
+    global _errors, _queue_depth
+
     config = CrawlerConfig()
 
     logging.basicConfig(
         level=getattr(logging, config.log_level),
         format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
     )
+
+    # Initialize OpenTelemetry
+    if config.otel_enabled:
+        from shared.telemetry import init_telemetry
+        _meter, _tracer = init_telemetry("crawler", config.otel_endpoint)
+        _urls_fetched = _meter.create_counter("urls_fetched", description="URLs fetched by crawler")
+        _fetch_duration = _meter.create_histogram(
+            "fetch_duration_seconds", description="Time to fetch a page", unit="s",
+        )
+        _content_dedup_skipped = _meter.create_counter(
+            "content_dedup_skipped", description="Pages skipped by content dedup",
+        )
+        _url_dedup_skipped = _meter.create_counter(
+            "url_dedup_skipped", description="URLs skipped by URL dedup",
+        )
+        _domain_ceiling_skipped = _meter.create_counter(
+            "domain_ceiling_skipped", description="URLs skipped by domain ceiling",
+        )
+        _errors = _meter.create_counter("processing_errors", description="Processing errors")
+        _queue_depth = _meter.create_observable_gauge(
+            "queue_depth", description="Current queue depth",
+        )
 
     logger.info("Starting crawler service...")
 
@@ -182,6 +231,8 @@ async def main() -> None:
         # Dedup check (in case URL was added to queue before dedup existed)
         if await dedup.is_seen(item.url):
             logger.debug("Skipping already-seen URL: %s", item.url)
+            if _url_dedup_skipped:
+                _url_dedup_skipped.add(1)
             continue
         await dedup.mark_seen(item.url)
 
@@ -189,6 +240,8 @@ async def main() -> None:
         domain = urlparse(item.url).netloc
         if await dedup.is_domain_exhausted(domain, config.max_urls_per_domain):
             logger.info("Domain ceiling reached for %s, skipping %s", domain, item.url)
+            if _domain_ceiling_skipped:
+                _domain_ceiling_skipped.add(1)
             continue
         await dedup.increment_domain(domain)
 
@@ -204,9 +257,13 @@ async def main() -> None:
                 dedup=dedup,
             )
         except FetchError as e:
+            if _errors:
+                _errors.add(1, {"service": "crawler", "type": "fetch"})
             await handle_failure(item, e, frontier_queue, session_factory, config.max_retries)
         except Exception as e:
             logger.error("Unexpected error processing %s: %s", item.url, e, exc_info=True)
+            if _errors:
+                _errors.add(1, {"service": "crawler", "type": "unexpected"})
             await handle_failure(item, e, frontier_queue, session_factory, config.max_retries)
 
     # Cleanup

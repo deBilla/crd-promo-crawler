@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import signal
+import time
 from datetime import datetime
 
 from sqlalchemy import update
@@ -23,6 +24,17 @@ from shared.queue import RedisQueue
 from shared.redis_client import create_redis
 
 logger = logging.getLogger(__name__)
+
+# Telemetry instruments (initialized in main)
+_meter = None
+_tracer = None
+_pages_extracted = None
+_deals_extracted = None
+_deals_stored = None
+_deals_duplicates = None
+_llm_call_duration = None
+_llm_errors = None
+_errors = None
 
 
 async def store_deals(
@@ -98,16 +110,32 @@ async def process_item(
     logger.info("Extracting deals from: %s", item.url)
 
     # Extract deals using LLM
-    deals = await extract_deals(
-        llm,
-        item.url,
-        item.page_title,
-        item.text_content,
-        max_content_chars,
-    )
+    t0 = time.monotonic()
+    try:
+        deals = await extract_deals(
+            llm,
+            item.url,
+            item.page_title,
+            item.text_content,
+            max_content_chars,
+        )
+    except Exception:
+        if _llm_errors:
+            _llm_errors.add(1, {"service": "extractor"})
+        raise
+    if _llm_call_duration:
+        _llm_call_duration.record(time.monotonic() - t0, {"service": "extractor"})
+
+    if _deals_extracted:
+        _deals_extracted.add(len(deals))
 
     # Store deals
     stored_count = await store_deals(deals, item.url, session_factory)
+    if _deals_stored:
+        bank = deals[0].bank_name if deals else "unknown"
+        _deals_stored.add(stored_count, {"bank": bank})
+    if _deals_duplicates:
+        _deals_duplicates.add(len(deals) - stored_count)
 
     # Update URL metadata status
     async with session_factory() as session:
@@ -118,17 +146,39 @@ async def process_item(
         )
         await session.commit()
 
+    if _pages_extracted:
+        _pages_extracted.add(1)
+
     logger.info("Processed %s: extracted %d deals, stored %d", item.url, len(deals), stored_count)
 
 
 async def main() -> None:
     """Main loop: pop from extraction queue → LLM extract → store."""
+    global _meter, _tracer, _pages_extracted, _deals_extracted, _deals_stored
+    global _deals_duplicates, _llm_call_duration, _llm_errors, _errors
+
     config = ExtractorConfig()
 
     logging.basicConfig(
         level=getattr(logging, config.log_level),
         format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
     )
+
+    # Initialize OpenTelemetry
+    if config.otel_enabled:
+        from shared.telemetry import init_telemetry
+        _meter, _tracer = init_telemetry("extractor", config.otel_endpoint)
+        _pages_extracted = _meter.create_counter("pages_extracted", description="Pages extracted")
+        _deals_extracted = _meter.create_counter("deals_extracted", description="Deals extracted from LLM")
+        _deals_stored = _meter.create_counter("deals_stored", description="Deals stored in DB")
+        _deals_duplicates = _meter.create_counter(
+            "deals_duplicates_skipped", description="Duplicate deals skipped",
+        )
+        _llm_call_duration = _meter.create_histogram(
+            "llm_call_duration_seconds", description="LLM extraction call duration", unit="s",
+        )
+        _llm_errors = _meter.create_counter("llm_errors", description="LLM call errors")
+        _errors = _meter.create_counter("processing_errors", description="Processing errors")
 
     logger.info("Starting extractor service...")
 
@@ -181,6 +231,8 @@ async def main() -> None:
             )
         except Exception as e:
             logger.error("Error processing %s: %s", item.url, e, exc_info=True)
+            if _errors:
+                _errors.add(1, {"service": "extractor", "type": "unexpected"})
 
     # Cleanup
     await llm.close()

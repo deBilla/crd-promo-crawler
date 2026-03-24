@@ -31,6 +31,7 @@ services:
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+      MINIO_PROMETHEUS_AUTH_TYPE: public
     ports:
       - "9000:9000"
       - "9001:9001"
@@ -40,6 +41,50 @@ services:
       interval: 5s
       timeout: 3s
       retries: 5
+
+  # --- Monitoring Stack ---
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.96.0
+    command: ["--config=/etc/otel-collector-config.yaml"]
+    volumes:
+      - ./monitoring/otel-collector-config.yaml:/etc/otel-collector-config.yaml:ro
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-crawler}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-crawlerpass}
+      POSTGRES_DB: ${POSTGRES_DB:-crawler}
+    ports:
+      - "4317:4317"   # OTLP gRPC
+      - "4318:4318"   # OTLP HTTP
+      - "8889:8889"   # Prometheus exporter
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  prometheus:
+    image: prom/prometheus:v2.51.0
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    ports: ["9090:9090"]
+    depends_on: [otel-collector]
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:10.4.1
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-admin}
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/pipeline-overview.json
+    volumes:
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    ports: ["3001:3000"]
+    depends_on: [prometheus]
+    restart: unless-stopped
 
   # --- Application Services ---
   crawler:
@@ -55,6 +100,8 @@ services:
         condition: service_started
       puppeteer:
         condition: service_started
+      otel-collector:
+        condition: service_started
     environment:
       REDIS_URL: redis://redis:6379/0
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-crawler}:${POSTGRES_PASSWORD:-crawlerpass}@postgres:5432/${POSTGRES_DB:-crawler}
@@ -64,6 +111,8 @@ services:
       MINIO_SECURE: "false"
       PUPPETEER_URL: http://puppeteer:3000
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      OTEL_ENDPOINT: http://otel-collector:4317
+      OTEL_ENABLED: "true"
     restart: unless-stopped
 
   parser:
@@ -79,6 +128,8 @@ services:
         condition: service_started
       puppeteer:
         condition: service_started
+      otel-collector:
+        condition: service_started
     environment:
       REDIS_URL: redis://redis:6379/0
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-crawler}:${POSTGRES_PASSWORD:-crawlerpass}@postgres:5432/${POSTGRES_DB:-crawler}
@@ -92,6 +143,8 @@ services:
       LLM_MODEL: ${LLM_MODEL:-llama3.1}
       LLM_BASE_URL: ${LLM_BASE_URL:-http://host.docker.internal:11434}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      OTEL_ENDPOINT: http://otel-collector:4317
+      OTEL_ENABLED: "true"
     restart: unless-stopped
 
   extractor:
@@ -103,6 +156,8 @@ services:
         condition: service_healthy
       postgres:
         condition: service_healthy
+      otel-collector:
+        condition: service_started
     environment:
       REDIS_URL: redis://redis:6379/0
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-crawler}:${POSTGRES_PASSWORD:-crawlerpass}@postgres:5432/${POSTGRES_DB:-crawler}
@@ -111,6 +166,8 @@ services:
       LLM_MODEL: ${LLM_MODEL:-llama3.1}
       LLM_BASE_URL: ${LLM_BASE_URL:-http://host.docker.internal:11434}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      OTEL_ENDPOINT: http://otel-collector:4317
+      OTEL_ENABLED: "true"
     restart: unless-stopped
 
   api:
@@ -120,10 +177,14 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      otel-collector:
+        condition: service_started
     ports: ["8000:8000"]
     environment:
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-crawler}:${POSTGRES_PASSWORD:-crawlerpass}@postgres:5432/${POSTGRES_DB:-crawler}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      OTEL_ENDPOINT: http://otel-collector:4317
+      OTEL_ENABLED: "true"
     restart: unless-stopped
 
   puppeteer:
@@ -135,3 +196,5 @@ volumes:
   redis-data:
   pg-data:
   minio-data:
+  prometheus-data:
+  grafana-data:

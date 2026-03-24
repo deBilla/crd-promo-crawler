@@ -20,6 +20,12 @@ graph TB
         puppeteer[Puppeteer]
     end
 
+    subgraph Monitoring
+        otel[OTel Collector]
+        prom[Prometheus]
+        grafana[Grafana :3001]
+    end
+
     subgraph External
         banks[Bank Websites]
         llm[Ollama / OpenAI / Anthropic]
@@ -45,6 +51,16 @@ graph TB
 
     api -->|read deals| postgres
     api -->|serve dashboard| api
+
+    crawler -.->|OTLP| otel
+    parser -.->|OTLP| otel
+    extractor -.->|OTLP| otel
+    api -.->|OTLP| otel
+    otel -.->|scrape| redis
+    otel -.->|scrape| postgres
+    prom -->|scrape| otel
+    prom -->|scrape| minio
+    grafana -->|query| prom
 ```
 
 > Detailed interactive diagram: [docs/diagrams/architecture.excalidraw](docs/diagrams/architecture.excalidraw) (open in [excalidraw.com](https://excalidraw.com))
@@ -85,6 +101,14 @@ scripts/seed.py
 | **Redis** | 6379 | Message queues, URL dedup, rate limiting |
 | **PostgreSQL** | 5432 | URL metadata, extracted deals |
 | **MinIO** | 9000/9001 | Raw HTML blob storage |
+
+### Monitoring
+
+| Service | Port | Purpose |
+|---------|------|---------|
+| **OpenTelemetry Collector** | 4317/4318 | Receives metrics/traces from all services via OTLP, scrapes Redis & Postgres |
+| **Prometheus** | 9090 | Metrics storage, scrapes OTel Collector + MinIO |
+| **Grafana** | 3001 | Dashboards (admin/admin) |
 
 ## Quick Start
 
@@ -136,6 +160,9 @@ python3 scripts/seed.py --clear
 # Web dashboard
 open http://localhost:8000/
 
+# Grafana dashboards (Pipeline Overview + Infrastructure)
+open http://localhost:3001/   # admin / admin
+
 # API stats
 curl http://localhost:8000/deals/stats
 
@@ -146,6 +173,12 @@ docker compose logs -f crawler parser extractor
 docker compose exec redis redis-cli llen queue:frontier
 docker compose exec redis redis-cli llen queue:parsing
 docker compose exec redis redis-cli llen queue:extraction
+```
+
+### 6. Export Deals to offerspot
+
+```bash
+python3 scripts/export_deals_json.py > deals.json
 ```
 
 ## API Endpoints
@@ -209,10 +242,36 @@ crd-promo-crawler/
     extractor/              # LLM deal extraction
     puppeteer/              # Headless Chrome sidecar
   shared/
-    shared/                 # Shared library (models, queue, dedup, DB, LLM client)
+    shared/                 # Shared library (models, queue, dedup, DB, LLM, telemetry)
+  monitoring/
+    otel-collector-config.yaml  # OpenTelemetry Collector config
+    prometheus.yml              # Prometheus scrape config
+    grafana/
+      provisioning/             # Datasources + dashboard providers
+      dashboards/               # Pipeline Overview + Infrastructure dashboards
   docker-compose.yml
   .env.example
 ```
+
+## Monitoring
+
+The monitoring stack uses OpenTelemetry for instrumentation with Prometheus + Grafana for visualization.
+
+### Grafana Dashboards
+
+| Dashboard | Panels |
+|-----------|--------|
+| **Pipeline Overview** | URLs fetched, pages parsed, relevant pages, deals extracted/stored, queue depths, fetch rate/duration, dedup stats, LLM call durations, API request rate/latency |
+| **Infrastructure** | Redis (memory, clients, commands/sec, hit rate), PostgreSQL (connections, DB size, row counts, commits/rollbacks), MinIO (objects, storage, request rates, network traffic) |
+
+### Metrics Collected
+
+Each Python service exports metrics to the OTel Collector via OTLP gRPC:
+
+- **Crawler**: `urls_fetched`, `fetch_duration_seconds`, `content_dedup_skipped`, `url_dedup_skipped`, `domain_ceiling_skipped`
+- **Parser**: `pages_parsed`, `pages_relevant`, `pages_irrelevant`, `links_discovered`, `prefilter_results`, `llm_call_duration_seconds`
+- **Extractor**: `pages_extracted`, `deals_extracted`, `deals_stored`, `deals_duplicates_skipped`, `llm_call_duration_seconds`
+- **API**: `api_requests` (by endpoint/method/status), `api_request_duration_seconds`
 
 ## LLM Configuration
 

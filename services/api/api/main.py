@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import logging
 import os
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -23,14 +24,34 @@ config = APIConfig()
 engine = create_engine(config.database_url)
 session_factory = create_session_factory(engine)
 
+# Telemetry instruments (initialized at startup)
+_meter = None
+_tracer = None
+_api_requests = None
+_api_request_duration = None
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Manage application lifecycle — startup and shutdown."""
+    global _meter, _tracer, _api_requests, _api_request_duration
+
     logging.basicConfig(
         level=getattr(logging, config.log_level),
         format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
     )
+
+    # Initialize OpenTelemetry
+    if config.otel_enabled:
+        from shared.telemetry import init_telemetry
+        _meter, _tracer = init_telemetry("api", config.otel_endpoint)
+        _api_requests = _meter.create_counter(
+            "api_requests", description="API requests by endpoint/method/status",
+        )
+        _api_request_duration = _meter.create_histogram(
+            "api_request_duration_seconds", description="API response time", unit="s",
+        )
+
     logger.info("Starting API service...")
     await create_tables(engine)
     logger.info("Database ready")
@@ -55,6 +76,21 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    # Metrics middleware
+    @app.middleware("http")
+    async def metrics_middleware(request: Request, call_next):
+        t0 = time.monotonic()
+        response = await call_next(request)
+        duration = time.monotonic() - t0
+        endpoint = request.url.path
+        method = request.method
+        status = str(response.status_code)
+        if _api_requests:
+            _api_requests.add(1, {"endpoint": endpoint, "method": method, "status": status})
+        if _api_request_duration:
+            _api_request_duration.record(duration, {"endpoint": endpoint, "method": method})
+        return response
 
     # Make session_factory available to route dependencies
     app.state.session_factory = session_factory
